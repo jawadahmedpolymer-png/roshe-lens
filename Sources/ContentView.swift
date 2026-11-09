@@ -23,6 +23,13 @@ struct ContentView: View {
             }
             .background(Color.ink.ignoresSafeArea())
             .toolbar {
+                if state.image != nil {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button { state.close() } label: {
+                            Image(systemName: "xmark").foregroundStyle(Color.gold)
+                        }
+                    }
+                }
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 8) {
                         Image("Logo").resizable().frame(width: 28, height: 28).clipShape(Circle())
@@ -32,7 +39,13 @@ struct ContentView: View {
                             .foregroundStyle(LinearGradient(colors: [.goldLight, .gold], startPoint: .top, endPoint: .bottom))
                     }
                 }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    if let share = state.shareImage {
+                        ShareLink(item: Image(uiImage: share),
+                                  preview: SharePreview("Roshe Lens translation", image: Image(uiImage: share))) {
+                            Image(systemName: "square.and.arrow.up").foregroundStyle(Color.gold)
+                        }
+                    }
                     Menu {
                         Picker("Translate into", selection: $state.target) {
                             ForEach(TargetLanguage.all) { Text($0.name).tag($0.id) }
@@ -53,38 +66,81 @@ struct ContentView: View {
 }
 
 struct HomeView: View {
+    @Environment(AppState.self) private var state
+    @State private var showCamera = false
+    @State private var showHistory = false
+    @State private var showSetup = false
+
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
-                Image("Logo").resizable().scaledToFit().frame(width: 140)
+            VStack(spacing: 20) {
+                Image("Logo").resizable().scaledToFit().frame(width: 130)
                     .clipShape(Circle())
                     .shadow(color: .gold.opacity(0.4), radius: 20)
-                    .frame(maxWidth: .infinity)
-                    .padding(.top, 12)
+                    .padding(.top, 8)
                 Text("Tap AssistiveTouch in any app to translate the screen.")
                     .font(.title3.weight(.semibold))
                     .foregroundStyle(.white)
-                VStack(alignment: .leading, spacing: 10) {
-                    step("1", "In Shortcuts, make a shortcut with Take Screenshot, then Translate Screen (Roshe Lens).")
-                    step("2", "Settings › Accessibility › Touch › AssistiveTouch › Single-Tap › choose that shortcut.")
-                    step("3", "Open Taobao, Meituan or WeChat and tap the floating button.")
+                    .multilineTextAlignment(.center)
+
+                Button { showCamera = true } label: {
+                    Label("Translate with camera", systemImage: "camera.fill")
+                        .font(.headline)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 15)
+                        .background(LinearGradient(colors: [.goldLight, .gold], startPoint: .top, endPoint: .bottom),
+                                    in: RoundedRectangle(cornerRadius: 14))
+                        .foregroundStyle(Color.ink)
                 }
-                .padding(16)
-                .background(Color.panel, in: RoundedRectangle(cornerRadius: 14))
+
+                HStack(spacing: 12) {
+                    tile("History", "clock.arrow.circlepath", "\(state.history.entries.count) saved") { showHistory = true }
+                    tile("Set up", "hand.tap.fill", "Tap, Action button") { showSetup = true }
+                }
+
+                if let last = state.history.entries.first {
+                    Button {
+                        state.open(last)
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text("Last translation").font(.caption).foregroundStyle(Color.gold)
+                                Text(last.preview.isEmpty ? "Open" : last.preview)
+                                    .font(.subheadline).foregroundStyle(.white).lineLimit(1)
+                            }
+                            Spacer()
+                            Image(systemName: "chevron.right").foregroundStyle(Color.gold)
+                        }
+                        .padding(14)
+                        .background(Color.panel, in: RoundedRectangle(cornerRadius: 14))
+                    }
+                }
+
                 Text("Translation runs on your iPhone with Apple's translator. No account, no fees, no VPN.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
             }
             .padding(20)
         }
+        .fullScreenCover(isPresented: $showCamera) {
+            CameraPicker { state.show($0) }.ignoresSafeArea()
+        }
+        .sheet(isPresented: $showHistory) { HistoryView() }
+        .sheet(isPresented: $showSetup) { SetupView() }
     }
 
-    private func step(_ n: String, _ text: String) -> some View {
-        HStack(alignment: .top, spacing: 12) {
-            Text(n).font(.headline).foregroundStyle(Color.ink)
-                .frame(width: 26, height: 26)
-                .background(Color.gold, in: Circle())
-            Text(text).foregroundStyle(.white.opacity(0.9))
+    private func tile(_ title: String, _ icon: String, _ sub: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 6) {
+                Image(systemName: icon).font(.title2).foregroundStyle(Color.gold)
+                Text(title).font(.headline).foregroundStyle(.white)
+                Text(sub).font(.caption).foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(Color.panel, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.gold.opacity(0.25)))
         }
     }
 }
@@ -107,18 +163,14 @@ struct ResultView: View {
                     state.selected = $0
                 }
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                Text("Tap any line to hear it, see pinyin or copy it.")
+                    .font(.caption).foregroundStyle(.secondary)
                 lineList
             }
             .padding(14)
         }
         .sheet(item: $state.selected) { b in
-            VStack(alignment: .leading, spacing: 10) {
-                Text(b.original).font(.title2)
-                Text(b.translated ?? "…").font(.title3.weight(.semibold)).foregroundStyle(Color.goldLight)
-            }
-            .padding(24)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .presentationDetents([.height(180)])
+            DetailSheet(block: b)
         }
     }
 
@@ -138,12 +190,18 @@ struct ResultView: View {
     private var lineList: some View {
         VStack(spacing: 0) {
             ForEach(state.blocks) { b in
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(b.original).foregroundStyle(.white.opacity(0.75))
-                    Text(b.translated ?? "…").fontWeight(.semibold).foregroundStyle(.white)
+                Button { state.selected = b } label: {
+                    HStack(alignment: .center) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(b.original).foregroundStyle(.white.opacity(0.75))
+                            Text(b.translated ?? "…").fontWeight(.semibold).foregroundStyle(.white)
+                        }
+                        Spacer(minLength: 8)
+                        Image(systemName: "speaker.wave.2").foregroundStyle(Color.gold.opacity(0.8))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, 8).padding(.horizontal, 12)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8).padding(.horizontal, 12)
                 Divider().overlay(Color.gold.opacity(0.2))
             }
         }

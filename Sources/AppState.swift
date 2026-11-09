@@ -40,12 +40,15 @@ final class AppState {
         case failed(String)
     }
 
+    let history = HistoryStore()
     var image: UIImage?
     var blocks: [TextBlock] = []
     var phase: Phase = .idle
     var showOriginal = false
     var selected: TextBlock?
+    var shareImage: UIImage?
     var config: TranslationSession.Configuration?
+    private var savedToHistory = false
     var target: String = UserDefaults.standard.string(forKey: "target") ?? "en" {
         didSet {
             UserDefaults.standard.set(target, forKey: "target")
@@ -59,20 +62,48 @@ final class AppState {
             phase = .failed("Couldn't open the screenshot.")
             return
         }
+        show(img)
+    }
+
+    /// Screenshot or camera photo: read, translate, save to history.
+    func show(_ raw: UIImage) {
+        let img = raw.uprightAndSized(maxSide: 2400)
         image = img
         blocks = []
         selected = nil
+        shareImage = nil
         showOriginal = false
+        savedToHistory = false
         phase = .reading
         Task {
             let found = await OCR.recognize(img)
             self.blocks = found
             if found.isEmpty {
-                self.phase = .failed("No Chinese text found on this screen.")
+                self.phase = .failed("No Chinese text found here.")
             } else {
                 self.startTranslation()
             }
         }
+    }
+
+    /// Re-open a past screen without translating again.
+    func open(_ e: HistoryEntry) {
+        guard let img = history.image(for: e) else { return }
+        image = img
+        blocks = e.blocks.map(\.block)
+        selected = nil
+        showOriginal = false
+        savedToHistory = true
+        phase = .done
+        renderShareImage()
+    }
+
+    func close() {
+        image = nil
+        blocks = []
+        shareImage = nil
+        selected = nil
+        phase = .idle
     }
 
     func startTranslation() {
@@ -90,6 +121,7 @@ final class AppState {
         let requests = blocks.map {
             TranslationSession.Request(sourceText: $0.original, clientIdentifier: $0.id.uuidString)
         }
+        guard !requests.isEmpty else { return }
         do {
             let responses = try await session.translations(from: requests)
             for r in responses {
@@ -99,8 +131,40 @@ final class AppState {
                 }
             }
             phase = .done
+            renderShareImage()
+            if !savedToHistory, let img = image {
+                history.add(image: img, blocks: blocks)
+                savedToHistory = true
+            }
         } catch {
             phase = .failed("Translation didn't finish. Make sure Chinese and your language are downloaded in the Translate app, then try again.")
+        }
+    }
+
+    /// Draws the translated screen into a picture for Save / Share.
+    func renderShareImage() {
+        guard let img = image else { return }
+        let width = min(img.size.width, 1290)
+        let height = width * img.size.height / img.size.width
+        let view = OverlayView(image: img, blocks: blocks, showOriginal: false, onTap: { _ in })
+            .frame(width: width, height: height)
+        let renderer = ImageRenderer(content: view)
+        renderer.scale = 1
+        shareImage = renderer.uiImage
+    }
+}
+
+extension UIImage {
+    /// Camera photos come rotated and very large; make them upright and smaller.
+    func uprightAndSized(maxSide: CGFloat) -> UIImage {
+        let longest = max(size.width, size.height)
+        let factor = longest > maxSide ? maxSide / longest : 1
+        if imageOrientation == .up && factor == 1 && scale == 1 { return self }
+        let target = CGSize(width: (size.width * factor).rounded(), height: (size.height * factor).rounded())
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1
+        return UIGraphicsImageRenderer(size: target, format: format).image { _ in
+            draw(in: CGRect(origin: .zero, size: target))
         }
     }
 }
