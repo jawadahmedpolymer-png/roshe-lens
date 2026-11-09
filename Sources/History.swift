@@ -54,7 +54,7 @@ struct HistoryEntry: Codable, Identifiable {
 final class HistoryStore {
     private(set) var entries: [HistoryEntry] = []
     private let dir: URL
-    private let limit = 100
+    private let limit = 30
 
     init() {
         dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
@@ -64,6 +64,16 @@ final class HistoryStore {
            let e = try? JSONDecoder().decode([HistoryEntry].self, from: d) {
             entries = e
         }
+        trim()
+    }
+
+    private func trim() {
+        guard entries.count > limit else { return }
+        while entries.count > limit {
+            let old = entries.removeLast()
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(old.imageFile))
+        }
+        persist()
     }
 
     private var indexURL: URL { dir.appendingPathComponent("index.json") }
@@ -78,10 +88,7 @@ final class HistoryStore {
         guard let jpg = image.jpegData(compressionQuality: 0.8) else { return }
         try? jpg.write(to: dir.appendingPathComponent(name))
         entries.insert(HistoryEntry(id: id, date: .now, imageFile: name, blocks: blocks.map(SavedBlock.init)), at: 0)
-        while entries.count > limit {
-            let old = entries.removeLast()
-            try? FileManager.default.removeItem(at: dir.appendingPathComponent(old.imageFile))
-        }
+        trim()
         persist()
     }
 
